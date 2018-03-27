@@ -460,6 +460,7 @@ pub struct WalkBuilder {
     max_depth: Option<usize>,
     max_filesize: Option<u64>,
     follow_links: bool,
+    include_ignored: bool,
     sorter: Option<Arc<
         Fn(&OsStr, &OsStr) -> cmp::Ordering + Send + Sync + 'static
     >>,
@@ -475,6 +476,7 @@ impl fmt::Debug for WalkBuilder {
             .field("max_depth", &self.max_depth)
             .field("max_filesize", &self.max_filesize)
             .field("follow_links", &self.follow_links)
+            .field("include_ignored", &self.include_ignored)
             .field("threads", &self.threads)
             .finish()
     }
@@ -495,6 +497,7 @@ impl WalkBuilder {
             max_depth: None,
             max_filesize: None,
             follow_links: false,
+            include_ignored: false,
             sorter: None,
             threads: 0,
         }
@@ -531,6 +534,7 @@ impl WalkBuilder {
             ig: ig_root.clone(),
             max_filesize: self.max_filesize,
             parents: self.parents,
+            include_ignored: self.include_ignored,
         }
     }
 
@@ -547,6 +551,7 @@ impl WalkBuilder {
             max_filesize: self.max_filesize,
             follow_links: self.follow_links,
             parents: self.parents,
+            include_ignored: self.include_ignored,
             threads: self.threads,
         }
     }
@@ -663,6 +668,7 @@ impl WalkBuilder {
         self.hidden(yes)
             .parents(yes)
             .ignore(yes)
+            .include_ignored(!yes)
             .git_ignore(yes)
             .git_global(yes)
             .git_exclude(yes)
@@ -736,6 +742,16 @@ impl WalkBuilder {
         self
     }
 
+    /// Enables including ignored files and directories.
+    ///
+    /// If this is enabled, files and directories that match an ignore rule will still be reported.
+    ///
+    /// This is disabled by default.
+    pub fn include_ignored(&mut self, yes: bool) -> &mut WalkBuilder {
+        self.include_ignored = yes;
+        self
+    }
+
     /// Set a function for sorting directory entries by file name.
     ///
     /// If a compare function is set, the resulting iterator will return all
@@ -765,6 +781,7 @@ pub struct Walk {
     ig: Ignore,
     max_filesize: Option<u64>,
     parents: bool,
+    include_ignored: bool,
 }
 
 impl Walk {
@@ -951,6 +968,7 @@ pub struct WalkParallel {
     max_filesize: Option<u64>,
     max_depth: Option<usize>,
     follow_links: bool,
+    include_ignored: bool,
     threads: usize,
 }
 
@@ -1013,6 +1031,7 @@ impl WalkParallel {
                 max_depth: self.max_depth,
                 max_filesize: self.max_filesize,
                 follow_links: self.follow_links,
+                include_ignored: self.include_ignored
             };
             handles.push(thread::spawn(|| worker.run()));
         }
@@ -1137,6 +1156,8 @@ struct Worker {
     /// Whether to follow symbolic links or not. When this is enabled, loop
     /// detection is performed.
     follow_links: bool,
+    // Whether to include ignored entries or not.
+    include_ignored: bool,
 }
 
 impl Worker {
