@@ -27,6 +27,7 @@ use {Error, PartialErrorBuilder};
 #[derive(Debug)]
 pub struct DirEntry {
     dent: DirEntryInner,
+    ignored: bool,
     err: Option<Error>,
 }
 
@@ -94,16 +95,23 @@ impl DirEntry {
         self.dent.is_dir()
     }
 
+    /// Returns true if this entry matched an ignore rule.
+    pub fn ignored(&self) -> bool {
+        self.ignored
+    }
+
     fn new_stdin() -> DirEntry {
         DirEntry {
             dent: DirEntryInner::Stdin,
+            ignored: false,
             err: None,
         }
     }
 
-    fn new_walkdir(dent: walkdir::DirEntry, err: Option<Error>) -> DirEntry {
+    fn new_walkdir(dent: walkdir::DirEntry, ignored: bool, err: Option<Error>) -> DirEntry {
         DirEntry {
             dent: DirEntryInner::Walkdir(dent),
+            ignored,
             err: err,
         }
     }
@@ -111,6 +119,7 @@ impl DirEntry {
     fn new_raw(dent: DirEntryRaw, err: Option<Error>) -> DirEntry {
         DirEntry {
             dent: DirEntryInner::Raw(dent),
+            ignored: false,
             err: err,
         }
     }
@@ -794,21 +803,21 @@ impl Walk {
         WalkBuilder::new(path).build()
     }
 
-    fn skip_entry(&self, ent: &walkdir::DirEntry) -> bool {
+    fn ignore_entry(&self, ent: &walkdir::DirEntry) -> bool {
         if ent.depth() == 0 {
             return false;
         }
 
         let is_dir = walkdir_entry_is_dir(ent);
         let max_size = self.max_filesize;
-        let should_skip_path = skip_path(&self.ig, ent.path(), is_dir);
+        let should_ignore_path = ignore_path(&self.ig, ent.path(), is_dir);
         let should_skip_filesize = if !is_dir && max_size.is_some() {
             skip_filesize(max_size.unwrap(), ent.path(), &ent.metadata().ok())
         } else {
             false
         };
 
-        should_skip_path || should_skip_filesize
+        should_ignore_path || should_skip_filesize
     }
 }
 
@@ -850,7 +859,8 @@ impl Iterator for Walk {
                     self.ig = self.ig.parent().unwrap();
                 }
                 Ok(WalkEvent::Dir(ent)) => {
-                    if self.skip_entry(&ent) {
+                    let ignored = self.ignore_entry(&ent);
+                    if ignored && !self.include_ignored {
                         self.it.as_mut().unwrap().it.skip_current_dir();
                         // Still need to push this on the stack because
                         // we'll get a WalkEvent::Exit event for this dir.
@@ -861,13 +871,14 @@ impl Iterator for Walk {
                     }
                     let (igtmp, err) = self.ig.add_child(ent.path());
                     self.ig = igtmp;
-                    return Some(Ok(DirEntry::new_walkdir(ent, err)));
+                    return Some(Ok(DirEntry::new_walkdir(ent, ignored, err)));
                 }
                 Ok(WalkEvent::File(ent)) => {
-                    if self.skip_entry(&ent) {
+                    let ignored = self.ignore_entry(&ent);
+                    if ignored && !self.include_ignored {
                         continue;
                     }
-                    return Some(Ok(DirEntry::new_walkdir(ent, None)));
+                    return Some(Ok(DirEntry::new_walkdir(ent, ignored, None)));
                 }
             }
         }
@@ -1217,9 +1228,8 @@ impl Worker {
 
     /// Runs the worker on a single entry from a directory iterator.
     ///
-    /// If the entry is a path that should be ignored, then this is a no-op.
-    /// Otherwise, the entry is pushed on to the queue. (The actual execution
-    /// of the callback happens in `run`.)
+    /// The entry is pushed on to the queue when the path shouldn't be ignored or when
+    /// `include_ignored` is true. (The actual execution of the callback happens in `run`.)
     ///
     /// If an error occurs while reading the entry, then it is sent to the
     /// caller's callback.
@@ -1262,14 +1272,15 @@ impl Worker {
         }
         let is_dir = dent.is_dir();
         let max_size = self.max_filesize;
-        let should_skip_path = skip_path(ig, dent.path(), is_dir);
+        let should_ignore_path = ignore_path(ig, dent.path(), is_dir);
         let should_skip_filesize = if !is_dir && max_size.is_some() {
             skip_filesize(max_size.unwrap(), dent.path(), &dent.metadata().ok())
         } else {
             false
         };
+        dent.ignored = should_ignore_path || should_skip_filesize;
 
-        if !should_skip_path && !should_skip_filesize {
+        if !dent.ignored || self.include_ignored {
             self.queue.push(Message::Work(Work {
                 dent: dent,
                 ignore: ig.clone(),
@@ -1443,7 +1454,7 @@ fn skip_filesize(
     }
 }
 
-fn skip_path(ig: &Ignore, path: &Path, is_dir: bool) -> bool {
+fn ignore_path(ig: &Ignore, path: &Path, is_dir: bool) -> bool {
     let m = ig.matched(path, is_dir);
     if m.is_ignore() {
         debug!("ignoring {}: {:?}", path.display(), m);
