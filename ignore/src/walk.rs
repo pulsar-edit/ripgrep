@@ -1706,6 +1706,21 @@ mod tests {
     }
 
     #[test]
+    fn include_ignored_files() {
+        let td = TempDir::new("walk-test-").unwrap();
+        mkdirp(td.path().join("a"));
+        wfile(td.path().join(".gitignore"), "foo");
+        wfile(td.path().join("foo"), "");
+        wfile(td.path().join("a/foo"), "");
+        wfile(td.path().join("bar"), "");
+        wfile(td.path().join("a/bar"), "");
+
+        assert_paths(td.path(), &WalkBuilder::new(td.path()).include_ignored(true), &[
+            ".gitignore", "a", "a/bar", "a/foo", "bar", "foo"
+        ]);
+    }
+
+    #[test]
     fn max_depth() {
         let td = TempDir::new("walk-test-").unwrap();
         mkdirp(td.path().join("a/b/c"));
