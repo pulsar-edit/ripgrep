@@ -1,3 +1,5 @@
+# This Repo is archived under Pulsar-Edit since it is not used.
+
 ripgrep (rg)
 ------------
 ripgrep is a line-oriented search tool that recursively searches your current
